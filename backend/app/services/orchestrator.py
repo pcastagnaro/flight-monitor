@@ -1,4 +1,7 @@
 import asyncio,hashlib,statistics
+import logging
+
+logger = logging.getLogger(__name__)
 import httpx
 from collections import defaultdict
 from datetime import datetime,timezone,timedelta
@@ -18,11 +21,23 @@ def _fp(o):
 def real_providers():
     return [FlightPowersProvider(),SerpApiProvider(),TravelpayoutsProvider(),DataCrawlerProvider()]
 def providers():
-    return [p for p in real_providers() if p.enabled] or [MockProvider()]
+    selected = [p for p in real_providers() if p.enabled]
+    if not selected:
+        logger.warning("No enabled real providers; using demo mode")
+    return selected or [MockProvider()]
 async def _safe(p,q):
-    try: return p.name,await p.search(q),None
-    except httpx.HTTPStatusError as e: return p.name,[],f"HTTP {e.response.status_code}"
-    except Exception as e: return p.name,[],type(e).__name__
+    logger.debug("Provider %s query %s -> %s departure=%s return=%s", p.name, q.origin, q.destination, q.departure_date, q.return_date)
+    try:
+        offers = await p.search(q)
+        logger.debug("Provider %s returned %s offers", p.name, len(offers))
+        return p.name, offers, None
+    except httpx.HTTPStatusError as e:
+        logger.error("Provider %s failed: HTTP %s", p.name, e.response.status_code)
+        return p.name, [], f"HTTP {e.response.status_code}"
+    except Exception as e:
+        # Exception messages may contain authenticated URLs or response bodies.
+        logger.error("Provider %s failed: %s", p.name, type(e).__name__)
+        return p.name, [], type(e).__name__
 async def search_query_parallel(q, selected=None): return await asyncio.gather(*[_safe(p,q) for p in (providers() if selected is None else selected)])
 def merge(items):
     groups=defaultdict(list)
@@ -33,6 +48,7 @@ def merge(items):
     return out
 async def run_search(db,search):
     run=SearchRun(search_id=search.id,status="running",details={}); db.add(run); db.commit(); db.refresh(run)
+    logger.info("Search %s run %s started", search.id, run.id)
     qs=[]; d=search.departure_from
     while d<=search.departure_to:
         r=search.return_from
@@ -41,6 +57,7 @@ async def run_search(db,search):
             r+=timedelta(days=1)
         d+=timedelta(days=1)
     selected=providers()
+    logger.info("Search %s: %s combinations, providers=%s", search.id, len(qs), ",".join(p.name for p in selected))
     sem=asyncio.Semaphore(8)
     async def one(q):
         async with sem: return await search_query_parallel(q, selected)
@@ -61,4 +78,6 @@ async def run_search(db,search):
         db.add(Recommendation(offer_id=o.id,state=state,score=total,historical_percentile=pct,confidence=confidence,reasons=reasons))
         if best.provider!="mock" and state=="BUY" and (previous is None or previous.state!="BUY"):
             await send_telegram(f"✈️ BUY · {o.origin}→{o.destination} · {o.departure_date} / {o.return_date} · €{float(o.best_price):.0f} · score {total} · confianza {confidence}%")
-    run.provider_count=len(pnames); run.result_count=len(items); run.status="ok" if items else "empty"; run.finished_at=datetime.now(timezone.utc); run.details={"mode":"demo" if all(p.name=="mock" for p in selected) else "real","providers":{p.name:{"enabled":p.enabled,"results":sum(x.provider==p.name for x in items),"errors":len(errs.get(p.name,[]))} for p in real_providers()},"provider_errors":{k:v[:3] for k,v in errs.items()},"combinations":len(qs),"provider_usage":{p.name:{"requests":p.requests,"skipped":p.skipped,"limit_per_run":p.limit} for p in selected if isinstance(p,DataCrawlerProvider)}}; db.commit(); return run
+    run.provider_count=len(pnames); run.result_count=len(items); run.status="ok" if items else "empty"; run.finished_at=datetime.now(timezone.utc); run.details={"mode":"demo" if all(p.name=="mock" for p in selected) else "real","providers":{p.name:{"enabled":p.enabled,"results":sum(x.provider==p.name for x in items),"errors":len(errs.get(p.name,[]))} for p in real_providers()},"provider_errors":{k:v[:3] for k,v in errs.items()},"combinations":len(qs),"provider_usage":{p.name:{"requests":p.requests,"skipped":p.skipped,"limit_per_run":p.limit} for p in selected if isinstance(p,DataCrawlerProvider)}}; db.commit()
+    logger.info("Search %s run %s finished: status=%s results=%s errors=%s", search.id, run.id, run.status, len(items), sum(len(v) for v in errs.values()))
+    return run

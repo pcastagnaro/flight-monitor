@@ -13,6 +13,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+psycopg://flight:flight@postgres:5432/flights
       FLIGHTPOWERS_API_KEY: ${FLIGHTPOWERS_API_KEY:-}
       DATACRAWLER_API_KEY: ${DATACRAWLER_API_KEY:-}
@@ -29,6 +30,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+psycopg://flight:flight@postgres:5432/flights
       FLIGHTPOWERS_API_KEY: ${FLIGHTPOWERS_API_KEY:-}
       DATACRAWLER_API_KEY: ${DATACRAWLER_API_KEY:-}

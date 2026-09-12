@@ -20,6 +20,7 @@ Está pensada como un **MVP de uso personal**, principalmente para búsquedas ma
 - [Cuotas y búsquedas programadas](#cuotas-y-búsquedas-programadas)
 - [Cómo se calculan las recomendaciones](#cómo-se-calculan-las-recomendaciones)
 - [API del proyecto](#api-del-proyecto)
+- [Logs y nivel de detalle](#logs-y-nivel-de-detalle)
 - [Operación, actualizaciones y copias](#operación-actualizaciones-y-copias)
 - [Despliegue en un servidor](#despliegue-en-un-servidor)
 - [Resolución de problemas](#resolución-de-problemas)
@@ -37,6 +38,7 @@ Actualmente permite:
 - Mostrar las ofertas guardadas ordenadas por precio, su última consulta y el estado de los proveedores.
 - Separar los resultados externos de los datos de demostración.
 - Enviar una notificación opcional de Telegram cuando una oferta pasa a BUY.
+- Registrar actividad y errores del backend y del worker con un nivel de detalle configurable mediante `LOG_LEVEL`.
 
 Todavía no incluye un flujo completo de reserva, autenticación, administración de usuarios, edición de búsquedas desde el dashboard, control mensual global de cuotas ni selección automática de las fechas más baratas mediante calendarios.
 
@@ -131,6 +133,8 @@ cp .env.example .env
 
 Si ya existe, edítalo sin sobrescribirlo. Para una demostración, deja vacías las claves de todos los proveedores. No pegues credenciales en el código, capturas ni documentación. `.env` está excluido de Git; si has compartido una clave, sustitúyela por una nueva.
 
+Mantén `LOG_LEVEL=INFO` para ver el progreso normal y los errores. Puedes usar `DEBUG` para investigar consultas concretas; los niveles y ejemplos están en [Logs y nivel de detalle](#logs-y-nivel-de-detalle).
+
 ### 3. Arranca en modo manual
 
 ```bash
@@ -180,6 +184,7 @@ Variables de `.env`:
 | `DATACRAWLER_MAX_REQUESTS_PER_RUN` | Opcional; defecto `5` | Máximo de intentos por ejecución; entero, `0` desactiva DataCrawler |
 | `TELEGRAM_BOT_TOKEN` | Solo para alertas | Token del bot |
 | `TELEGRAM_CHAT_ID` | Solo para alertas | Chat destinatario |
+| `LOG_LEVEL` | Opcional; defecto `INFO` | Umbral de logs del backend y worker: `DEBUG`, `INFO`, `WARNING`, `ERROR` o `CRITICAL` |
 
 Las claves de los distintos proveedores son independientes en la configuración. No se copia automáticamente la clave de FlightPowers a DataCrawler, aunque una cuenta de RapidAPI pueda utilizar la misma clave para ambas suscripciones.
 
@@ -524,6 +529,155 @@ Los resultados incluyen `source` (`real` o `demo`) y `last_seen_at` (última vez
 
 `ok` significa que se recibieron resultados; puede haber errores parciales. `empty` significa que no se recibieron ofertas, tanto por ausencia de resultados como por errores o filtros. Consulta siempre `provider_errors`. Un fallo no gestionado durante el guardado o Telegram puede dejar una ejecución marcada como `running`.
 
+## Logs y nivel de detalle
+
+Los logs son mensajes que la aplicación escribe mientras funciona. Permiten seguir una búsqueda, identificar qué proveedor ha fallado y entender por qué se han omitido consultas. Se escriben en la **salida estándar de los procesos del backend y del worker**; Docker recoge esa salida y permite consultarla desde la terminal. La aplicación no crea un archivo `.log` propio ni una pantalla de logs en el dashboard.
+
+### Configuración de `LOG_LEVEL`
+
+La plantilla `.env.example` documenta los valores aceptados. Para configurar tu instalación, añade o modifica esta línea en **`.env`**, en la raíz del repositorio:
+
+```env
+LOG_LEVEL=INFO
+```
+
+`.env.example` es una plantilla: modificarla no cambia una instalación que ya tiene `.env`. Docker Compose lee `.env` y pasa `LOG_LEVEL` a ambos servicios. Si la variable no está definida o está vacía en Compose, utiliza `INFO`. Una variable `LOG_LEVEL` exportada en la terminal puede prevalecer sobre el valor de `.env`; evita mantener dos valores diferentes si estás diagnosticando la configuración.
+
+Los niveles se ordenan de menor a mayor gravedad. El nivel elegido actúa como **umbral**: se muestran sus mensajes y todos los de mayor gravedad.
+
+| Valor | Qué permite ver | Uso habitual |
+| --- | --- | --- |
+| `DEBUG` | Todo lo anterior en detalle: proveedor, origen, destino, fechas de cada consulta, cantidad de ofertas devueltas y omisiones de DataCrawler por límite o bloqueo; también todos los niveles siguientes | Investigar una búsqueda concreta |
+| `INFO` | Inicio y final de búsquedas, identificadores, combinaciones, proveedores seleccionados, totales de resultados y errores; inicio del worker y número de búsquedas activas; también avisos y errores | Funcionamiento cotidiano; valor predeterminado |
+| `WARNING` | Avisos, como recurrir a datos demo por falta de proveedores habilitados, y mensajes de error o críticos | Reducir los mensajes de actividad normal |
+| `ERROR` | Fallos de consulta a proveedores, fallos de ejecución del worker y mensajes críticos | Mostrar principalmente problemas |
+| `CRITICAL` | Solo mensajes emitidos como críticos | Filtrado máximo; oculta también errores ordinarios |
+
+`DEBUG` incluye `INFO`, `WARNING`, `ERROR` y `CRITICAL`. `ERROR` incluye `CRITICAL`, pero no incluye `WARNING`. Seleccionar un nivel no cambia las consultas, las cuotas, las recomendaciones ni los datos almacenados: solo cambia la información escrita en consola.
+
+Se aceptan minúsculas y espacios alrededor del valor, que se normalizan al arrancar. No se admiten `WARN`, `TRACE`, `OFF`, `NONE` ni valores numéricos. Un valor desconocido provoca `ValueError: LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR or CRITICAL` e impide iniciar la aplicación o el worker. El código de negocio actual no emite eventos propios de nivel `CRITICAL`; ese ajuste puede dejar la consola sin mensajes incluso cuando falla un proveedor.
+
+### Aplicar el cambio
+
+Si incorporas por primera vez esta funcionalidad o has actualizado el código, reconstruye las imágenes. En modo manual:
+
+```bash
+docker compose up -d --build backend
+```
+
+Si también utilizas la programación diaria, una vez que el backend esté operativo:
+
+```bash
+docker compose up -d --build worker
+```
+
+En cambios posteriores que solo modifiquen `LOG_LEVEL` en `.env`, basta con recrear los servicios afectados mediante Compose:
+
+```bash
+# Solo búsquedas manuales
+docker compose up -d backend
+
+# Alternativa si también quieres mantener activo el worker
+docker compose up -d backend worker
+```
+
+No necesitas ejecutar ambas alternativas. El comando que incluye `worker` lo inicia si estaba detenido. `docker compose restart` no carga las nuevas variables del archivo `.env`, y el proceso no vuelve a leer el nivel en cada búsqueda. No es necesario reiniciar PostgreSQL, reconstruir el frontend ni eliminar datos para cambiar el nivel.
+
+### Consultar y guardar logs
+
+Ejecuta los comandos desde la carpeta que contiene `docker-compose.yml`:
+
+```bash
+# Últimos 100 mensajes de cada servicio
+docker compose logs --tail=100 backend worker
+
+# Ver los mensajes recientes y seguir los nuevos en directo
+docker compose logs --tail=100 -f backend worker
+
+# Solo las búsquedas lanzadas desde la API o el dashboard
+docker compose logs --tail=100 -f backend
+
+# Solo el proceso de búsquedas diarias
+docker compose logs --tail=100 -f worker
+
+# Mensajes de los últimos 15 minutos
+docker compose logs --since=15m backend worker
+
+# Guardar una copia para diagnóstico en un archivo local
+docker compose logs --no-color --since=15m backend worker > flight-monitor-diagnostico.log
+```
+
+`Ctrl+C` termina el seguimiento de logs sin detener los servicios. La redirección `>` crea el archivo o sobrescribe uno existente con ese nombre. El archivo exportado no se actualiza automáticamente después del comando.
+
+Una búsqueda iniciada con **Buscar ahora** o `POST /api/searches/{id}/run` registra su actividad en `backend`. Una búsqueda programada registra su actividad en `worker`, aunque ambas escriban en la misma base de datos. Si solo consultas los logs de uno de ellos, puedes no ver la ejecución que buscas.
+
+### Formato y ejemplos
+
+Cada mensaje configurado por la aplicación contiene fecha y hora, gravedad, nombre del módulo y descripción:
+
+```text
+fecha hora NIVEL módulo: mensaje
+```
+
+Ejemplo ilustrativo de una ejecución demo con `INFO` —los identificadores y horas no corresponden a una ejecución real—:
+
+```text
+2026-09-12 10:00:00,001 INFO app.services.orchestrator: Search 1 run 7 started
+2026-09-12 10:00:00,002 WARNING app.services.orchestrator: No enabled real providers; using demo mode
+2026-09-12 10:00:00,003 INFO app.services.orchestrator: Search 1: 1 combinations, providers=mock
+2026-09-12 10:00:00,020 INFO app.services.orchestrator: Search 1 run 7 finished: status=ok results=1 errors=0
+```
+
+Con `DEBUG`, esa misma ejecución añade mensajes como:
+
+```text
+2026-09-12 10:00:00,004 DEBUG app.services.orchestrator: Provider mock query BCN -> EZE departure=2026-11-25 return=2027-01-10
+2026-09-12 10:00:00,005 DEBUG app.services.orchestrator: Provider mock returned 1 offers
+```
+
+Otros ejemplos de diagnóstico:
+
+```text
+ERROR app.services.orchestrator: Provider datacrawler failed: HTTP 429
+ERROR app.services.orchestrator: Provider serpapi failed: ReadTimeout
+DEBUG app.providers.datacrawler: DataCrawler query skipped: blocked=False requests=5 limit=5
+INFO app.worker: Worker started; daily schedule at 06:00 Europe/Madrid
+```
+
+`Search` identifica la búsqueda guardada; `run` identifica una ejecución concreta. `results` cuenta ofertas recibidas antes de agruparlas y `errors` cuenta errores de consultas a proveedores. Una ejecución con `status=ok` puede incluir errores parciales si otro proveedor sí devolvió ofertas. El nivel `ERROR` puede mostrar varios mensajes del mismo proveedor si han fallado varias combinaciones.
+
+Una línea de inicio sin su correspondiente final no demuestra por sí sola que el proceso siga trabajando: un fallo al guardar o al enviar Telegram puede interrumpirlo. Contrasta los mensajes con `/api/searches/{id}/runs` y con el estado del contenedor.
+
+Docker puede anteponer el nombre del servicio. Las horas del formateador dependen de la zona horaria del proceso/contenedor y no llevan un indicador de zona en el formato actual. No debe asumirse que coinciden con Europe/Madrid: esa zona se configura expresamente para el horario del worker.
+
+### Alcance, datos sensibles y conservación
+
+La configuración compartida está en `backend/app/logging_config.py` y se carga al iniciar la API y el worker. También configura los logs de Uvicorn; sus mensajes de acceso HTTP aparecen desde `INFO`. No controla los logs de Next.js, PostgreSQL ni los de Alembic, que ejecuta las migraciones en un proceso previo al arranque de la API.
+
+Los registros propios de errores de proveedores incluyen el código HTTP o el nombre de la excepción. No incluyen su mensaje completo, respuestas originales ni URLs autenticadas. Los loggers de `httpx` y `httpcore` se mantienen como mínimo en `WARNING`, incluso con `LOG_LEVEL=DEBUG`, para evitar que sus trazas informativas o de depuración muestren claves en URLs o cabeceras.
+
+Esto no constituye una censura universal de todos los logs: las trazas de excepciones no gestionadas y los mensajes de otras bibliotecas pueden contener información adicional. En `DEBUG` se muestran rutas y fechas de viaje, y los logs de acceso pueden mostrar rutas solicitadas. Revisa cualquier exportación antes de compartirla.
+
+Los logs de consola y los registros de `search_runs` tienen propósitos distintos. El nivel no elimina errores ni estadísticas guardados en la base, y tampoco recupera mensajes que se omitieron por el umbral anterior. Activar `DEBUG` permite ver más información de ejecuciones posteriores; no reconstruye el detalle de búsquedas ya terminadas.
+
+La conservación de la salida depende de Docker y de su configuración de logging. Este Compose no establece rotación, tamaño máximo ni un almacén central de logs. Exporta el diagnóstico que quieras conservar antes de retirar o recrear contenedores; el volumen PostgreSQL conserva el histórico de búsquedas, no la salida de consola. Un nivel `DEBUG` permanente puede producir muchos mensajes con rangos amplios de fechas.
+
+### Comprobar el nivel sin consumir cuota externa
+
+Para ver únicamente el valor recibido por el backend, sin volcar el resto de variables:
+
+```bash
+docker compose exec backend printenv LOG_LEVEL
+```
+
+Para el worker, sustituye `backend` por `worker` si está activo. Para verificar el filtrado sin arrancar servicios dependientes, consultar proveedores ni modificar la base, después de construir la imagen:
+
+```bash
+docker compose run --rm --no-deps backend python -m unittest discover -s tests -p 'test_logging.py' -v
+```
+
+Las pruebas comprueban los cinco umbrales, minúsculas, valores inválidos, ausencia de duplicados al configurar dos veces, el filtrado de accesos de Uvicorn y la supresión de mensajes informativos/de depuración de las bibliotecas HTTP. Para observar una búsqueda completa en demo, deben estar deshabilitados todos los proveedores externos; no lances una búsqueda con claves activas solo para comprobar el nivel.
+
 ## Operación, actualizaciones y copias
 
 ### Comandos habituales
@@ -594,6 +748,9 @@ No hay scripts de despliegue remoto, proxy HTTPS ni autenticación implementados
 | --- | --- |
 | Docker no conecta al daemon | Abre Docker Desktop o inicia Docker Engine; prueba `docker info` |
 | Puerto 3000 u 8000 ocupado | Detén el otro servicio o adapta los puertos; si cambias el de la API, revisa también URL de frontend y CORS |
+| Error `LOG_LEVEL must be…` al arrancar | Corrige el valor en `.env` a uno de los cinco niveles admitidos y recrea backend/worker |
+| No aparecen mensajes de búsquedas | Comprueba `LOG_LEVEL`, consulta el servicio que ejecutó la búsqueda y usa `INFO` o `DEBUG`; el worker no busca al arrancar |
+| Cambio de nivel sin efecto | Modifica `.env`, no solo `.env.example`; recrea el contenedor y comprueba si tu terminal exporta otro `LOG_LEVEL` |
 | El backend no arranca | Revisa logs de `postgres` y `backend`, salud de PostgreSQL y errores de Alembic |
 | `ModuleNotFoundError: app` durante migraciones | Comprueba que `backend/alembic.ini` conserva `prepend_sys_path = %(here)s` y reconstruye backend |
 | Clave añadida pero proveedor desactivado | Recrea backend y, si lo usas, worker; no basta con reiniciar |
@@ -632,6 +789,8 @@ backend/
     services/orchestrator.py  Paralelismo, agrupación, guardado y avisos
     services/scoring.py       Puntuación y recomendaciones
     services/telegram.py      Envío de avisos
+    logging_config.py         Nivel, formato y salida compartidos de logs
+    main.py                   Arranque de API y configuración de logs
     models.py                 Tablas de SQLAlchemy
     schemas.py                Esquemas de entrada/salida
     worker.py                 Programación diaria
@@ -648,15 +807,18 @@ Tablas principales: `searches`, `search_runs`, `offers`, `price_snapshots` y `re
 
 ### Ejecutar las pruebas del backend
 
-Con las imágenes construidas, sin arrancar dependencias adicionales:
+Construye la imagen para incluir el código y las pruebas actuales; después ejecuta la suite sin arrancar dependencias adicionales:
 
 ```bash
+docker compose build backend
 docker compose run --rm --no-deps backend python -m unittest discover -s tests -v
 ```
 
 La prueba `test_demo_cannot_hide_real_results` crea 101 ofertas demo baratas y una externa más cara en una base SQLite temporal. Comprueba que la externa aparece en datos reales pese al límite de 100 y que la respuesta demo no expone recomendaciones. No modifica la base PostgreSQL del usuario.
 
 Las pruebas de DataCrawler utilizan HTTP simulado para comprobar normalización, filtrado, errores, desactivación y límite concurrente. No consumen cuota. Esto no certifica compatibilidad con todas las respuestas reales futuras del proveedor.
+
+Las pruebas de `test_logging.py` verifican la configuración de logs en procesos aislados. La suite actual contiene ocho pruebas y se ha ejecutado correctamente en el contenedor del backend tras incorporar `LOG_LEVEL`. Las pruebas no comprueban credenciales reales ni envían alertas.
 
 También puedes utilizar un entorno Python 3.12 local:
 
@@ -667,6 +829,8 @@ pip install -r backend/requirements.txt
 cd backend
 python -m unittest discover -s tests -v
 ```
+
+Si ejecutas Python fuera de Docker, el código lee las variables del entorno del proceso; no carga `.env` automáticamente. Por ejemplo, `LOG_LEVEL=DEBUG python -m app.worker` aplica el nivel a ese proceso, pero necesitas configurar también `DATABASE_URL` y las credenciales que correspondan. El nombre `postgres` de la URL de Compose se resuelve dentro de su red, no normalmente desde el equipo anfitrión.
 
 La API sigue necesitando PostgreSQL para funcionar normalmente; ejecutar pruebas no equivale a levantar la aplicación completa.
 

@@ -1,5 +1,8 @@
 """DataCrawler Google Flights discovery (no automatic booking/pagination calls)."""
+import logging
 import math
+
+logger = logging.getLogger(__name__)
 import os
 
 import httpx
@@ -26,6 +29,7 @@ class DataCrawlerProvider:
         # Instances are shared for one run. Reserve before the first await.
         if self.blocked or self.requests >= self.limit:
             self.skipped += 1
+            logger.debug("DataCrawler query skipped: blocked=%s requests=%s limit=%s", self.blocked, self.requests, self.limit)
             return []
         self.requests += 1
         params = {
