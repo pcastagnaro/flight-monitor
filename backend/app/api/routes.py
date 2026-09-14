@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query as Param
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from collections import defaultdict
 from datetime import timedelta
 from app.services.history import history_indicator
+from app.services.identity import fingerprint
+from app.providers.base import ProviderOffer
 from typing import Annotated
 from sqlalchemy.orm import Session
 from app.db import get_db
@@ -191,16 +193,77 @@ def results(
     }[sort]
     descending = direction == "desc" or (direction is None and sort == "recent")
     ordering = (column.desc() if descending else column.asc()).nulls_last()
-    offers = db.scalars(
-        statement.order_by(ordering, Offer.id).offset(offset).limit(limit)
-    ).all()
+    offers = db.scalars(statement.order_by(ordering, Offer.id)).all()
+    # Canonicalize legacy rows as well; paginate unique itineraries, not sellers.
+    ranked = (
+        select(
+            PriceSnapshot.id,
+            func.row_number()
+            .over(
+                partition_by=PriceSnapshot.offer_id,
+                order_by=(PriceSnapshot.checked_at.desc(), PriceSnapshot.id.desc()),
+            )
+            .label("rank"),
+        )
+        .join(Offer, Offer.id == PriceSnapshot.offer_id)
+        .where(Offer.search_id == search_id)
+        .subquery()
+    )
+    newest_by_offer = {
+        x.offer_id: x
+        for x in db.scalars(
+            select(PriceSnapshot)
+            .join(ranked, PriceSnapshot.id == ranked.c.id)
+            .where(ranked.c.rank == 1)
+        )
+    }
+    groups = defaultdict(list)
+    for o in offers:
+        x = newest_by_offer.get(o.id)
+        key = (
+            fingerprint(
+                ProviderOffer(
+                    provider=x.provider,
+                    provider_offer_id=x.provider_offer_id,
+                    origin=o.origin,
+                    destination=o.destination,
+                    departure_date=o.departure_date,
+                    return_date=o.return_date,
+                    price=float(o.best_price),
+                    currency=o.currency,
+                    airlines=o.airlines,
+                    stops=o.stops,
+                    duration_minutes=o.duration_minutes,
+                    raw=x.raw or {},
+                )
+            )
+            if x and x.raw
+            else str(o.id)
+        )
+        groups[key].append(o)
+    grouped_rows = {}
+    for members in groups.values():
+        # Prefer the newest observation from each seller over its stale legacy row.
+        by_seller = {}
+        for o in sorted(members, key=lambda o: (utc(o.last_seen_at), o.id)):
+            x = newest_by_offer.get(o.id)
+            by_seller[x.provider if x else str(o.id)] = o
+        candidates = list(by_seller.values())
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+        best = min(
+            candidates, key=lambda o: (utc(o.last_seen_at) < cutoff, o.best_price, o.id)
+        )
+        grouped_rows[best.id] = members
+    offers = [o for o in offers if o.id in grouped_rows][offset : offset + limit]
     historical = defaultdict(list)
     if offers:
         cutoff = min(utc(o.last_seen_at) for o in offers) - timedelta(days=30)
-        for snapshot in db.scalars(select(PriceSnapshot).where(
-            PriceSnapshot.offer_id.in_([o.id for o in offers]),
-            PriceSnapshot.checked_at >= cutoff,
-        )):
+        for snapshot in db.scalars(
+            select(PriceSnapshot).where(
+                PriceSnapshot.offer_id.in_([o.id for o in offers]),
+                PriceSnapshot.checked_at >= cutoff,
+            )
+        ):
             historical[snapshot.offer_id].append(snapshot)
     out = []
     for o in offers:
@@ -215,6 +278,7 @@ def results(
                 "source": source,
                 "last_seen_at": o.last_seen_at,
                 "id": o.id,
+                "grouped_offers": len(grouped_rows[o.id]),
                 "origin": o.origin,
                 "destination": o.destination,
                 "departure_date": o.departure_date,
@@ -251,7 +315,14 @@ def results(
         newest = snapshots[0] if snapshots else None
         out[-1].update(
             {
-                "provider_names": list(dict.fromkeys(x.provider for x in snapshots)),
+                "provider_names": sorted(
+                    {x.provider for x in snapshots}
+                    | {
+                        newest_by_offer[m.id].provider
+                        for m in grouped_rows[o.id]
+                        if m.id in newest_by_offer
+                    }
+                ),
                 "complete_trip": bool(newest and newest.raw.get("_complete_trip")),
                 "stale": (
                     datetime.now(timezone.utc) - utc(o.last_seen_at)

@@ -28,7 +28,7 @@ Revisión iniciada el 12 y verificada el 14 de septiembre de 2026. Se inspeccion
 
 FlightPowers, SerpApi, DataCrawler, fast-flights y Chromium comparten Google Flights. Kiwi Tequila y FlightFinder comparten el ecosistema Kiwi. Tener varios extractores mejora recuperación, pero no prueba independencia de mercado.
 
-Los resultados se conservan por proveedor e identidad de itinerario. Se utilizan segmentos cuando existen; cuando solo existe un identificador opaco, su estabilidad depende del proveedor. No se asegura continuidad histórica entre identificadores que cambien. Los registros de test y producción no comparten identidad.
+Los resultados se agrupan por identidad completa comparable entre proveedores; sin ella, se conserva la identidad específica del extractor. El parser fijado de FlightFinder omite los números de vuelo: se agrupan sus repeticiones internas, pero no se fuerza su equivalencia con otros proveedores. Cuando solo existe un identificador opaco, su estabilidad depende del proveedor. No se asegura continuidad histórica entre identificadores que cambien. Los registros de test y producción no comparten identidad.
 
 Amadeus, Kiwi Tequila y FlightFinder comprueban los aeropuertos y las fechas de ambos trayectos antes de marcar «ida y vuelta detalladas». Esta marca no confirma disponibilidad final ni incluye una llamada de revalidación de precio. El resto de fuentes se presenta con limitaciones explícitas. Si el usuario exige ambos trayectos detallados, se descartan los descubrimientos incompletos y continúa el failover.
 

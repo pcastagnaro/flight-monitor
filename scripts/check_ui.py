@@ -47,6 +47,7 @@ async def exercise(ui_url, screenshots):
         await page.get_by_label("Nombre", exact=True).fill(
             "Prueba de búsqueda escalonada"
         )
+        await page.get_by_text("Opciones avanzadas · cobertura y fuentes", exact=True).click()
         await page.get_by_label("Máximo de combinaciones", exact=True).fill("4")
         await page.get_by_label("Máximo de llamadas a adaptadores", exact=True).fill(
             "6"
@@ -97,6 +98,7 @@ async def exercise(ui_url, screenshots):
         await expect(
             page.get_by_role("heading", name="4 ofertas · página 1")
         ).to_be_visible()
+        await page.get_by_text("Más filtros · duración, proveedor y orden", exact=True).click()
         await page.get_by_role("button", name="Precio", exact=True).click()
         await expect(page.locator('th[aria-sort="descending"]')).to_contain_text(
             "Precio"
@@ -124,7 +126,8 @@ async def exercise(ui_url, screenshots):
         await expect(
             page.get_by_role("heading", name="4 ofertas · página 1")
         ).to_be_visible()
-        await page.locator("details.diagnostics > summary").click()
+        if await page.locator("details.diagnostics").get_attribute("open") is not None:
+            await page.locator("details.diagnostics > summary").click()
         await page.screenshot(path=str(screenshots / "desktop.png"), full_page=True)
         await page.set_viewport_size({"width": 390, "height": 844})
         await page.screenshot(path=str(screenshots / "mobile.png"), full_page=True)

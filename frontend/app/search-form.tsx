@@ -125,6 +125,13 @@ export default function SearchForm({
       <summary>＋ Crear búsqueda avanzada</summary>
       <form onSubmit={submit}>
         <fieldset disabled={busy}>
+          <div className="controls">
+            <button type="button" className="secondary" onClick={() => {
+              setForm(f => ({...f, provider_names: ["flightfinder", "fast_flights"], allow_experimental: true, currency: "USD", strategy: "exhaustive"}));
+              setPreview(null);
+            }}>Usar Kiwi + Google</button>
+            <span className="muted">FlightFinder + flights-skill (fast-flights) · USD · requiere fuentes habilitadas</span>
+          </div>
           <div className="form-grid">
             {field("name", "Nombre", "text", {
               required: true,
@@ -223,7 +230,8 @@ export default function SearchForm({
               placeholder: "Iberia, BA",
             })}
           </div>
-          <h3>Cobertura y consumo</h3>
+          <details className="advanced-options">
+          <summary>Opciones avanzadas · cobertura y fuentes</summary>
           <div className="form-grid">
             <label>
               Estrategia
@@ -306,6 +314,7 @@ export default function SearchForm({
                 </label>
               ))}
             </div>
+          </details>
           </details>
           {error && (
             <p role="alert" className="error">

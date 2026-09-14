@@ -25,6 +25,7 @@ El backend aplica `alembic upgrade head` antes de arrancar. La migración conser
 - Estimación sin peticiones externas: combinaciones posibles, planificadas y omitidas.
 - Filtros sobre ofertas guardadas: precio mínimo/máximo, escalas, aerolínea, destino, duración máxima y proveedor.
 - Ordenamiento ascendente o descendente por columnas, paginación e histórico por oferta.
+- Indicadores de buen precio, precio habitual o alto y tendencia al alza, a la baja o estable, con variación porcentual.
 - Tres paletas de colores y vista compacta, con preferencias guardadas en el navegador.
 - Antigüedad visible, filtro de últimas 6 horas y separación entre datos externos y demo/test.
 - Diagnóstico por consulta: caché, vacío, error, filtrado, incompatibilidad, cuota, pausa y tiempo agotado.
@@ -56,15 +57,35 @@ Los filtros y el ordenamiento se aplican **en el servidor, antes de paginar**, a
 
 El destacado **Menor precio de los resultados filtrados** aparece en la primera página al ordenar por precio ascendente. Si no hay coincidencias, revisa los filtros o la pestaña **Datos reales / Demostración** antes de ejecutar otra búsqueda.
 
+### Precio y tendencia frente al histórico
+
+Cada opción y la oferta destacada muestran una valoración en **Histórico · 30 días**, calculada con las observaciones guardadas de la misma oferta y moneda. Se toma un mínimo por día UTC en los 30 días anteriores a la última observación de la oferta y se excluye el día de esa observación. Así, consultar varias veces en un día no le da más peso en la comparación.
+
+| Indicador | Cómo se calcula |
+| --- | --- |
+| Buen precio | Precio mostrado al menos un 10% por debajo de la mediana de los mínimos diarios |
+| Precio habitual | Variación inferior al 10% en ambos sentidos respecto a esa mediana |
+| Precio alto | Precio mostrado al menos un 10% por encima de esa mediana |
+| Histórico insuficiente | Menos de 3 días previos con observaciones comparables |
+| ↑ En alza / ↓ En baja | Subida o bajada de al menos el 2% respecto al mínimo del último día previo registrado |
+| → Estable | Variación inferior al 2% en ambos sentidos respecto a ese último día |
+| Sin tendencia todavía | No hay ningún día previo comparable |
+
+La valoración muestra la mediana, la diferencia porcentual y el número de días disponibles. La tendencia muestra su porcentaje y la fecha de comparación: puede referirse a un día anterior a ayer si hubo días sin observaciones. Puede aparecer una tendencia aunque todavía no haya los 3 días necesarios para valorar el precio.
+
+Por ejemplo, con una mediana de 500 EUR y un último mínimo diario de 430 EUR, una oferta a 450 EUR se marca como **Buen precio** (−10% frente a la mediana) y **En alza** (+4,7% frente al último día registrado).
+
+El botón **Histórico** abre las últimas 100 observaciones con fecha, fuente y precio. Reutilizar caché no añade puntos. Los indicadores se calculan sobre los datos guardados sin consumir APIs; en **Demostración** describen datos simulados o de prueba. La antigüedad sigue indicada en **Consultado**: la ventana histórica se refiere a la última observación, no necesariamente a hoy. Son comparaciones del histórico registrado, no predicciones ni confirmaciones de disponibilidad.
+
 ### Apariencia y lectura de la tabla
 
 En la cabecera puedes elegir **Índigo**, **Océano** o **Ciruela**, y activar **Vista compacta** para reducir el espacio entre filas. Ambas preferencias se guardan en el almacenamiento local de ese navegador y se recuperan al recargar; no se sincronizan entre dispositivos. Los filtros y el ordenamiento se restablecen al recargar.
 
 Los indicadores combinan color y texto:
 
-- **Verde:** vuelo directo, observación reciente o precio dentro del objetivo configurado. El objetivo solo se compara cuando coincide la moneda.
-- **Ámbar:** observación de más de 6 horas.
-- **Neutro:** número de escalas o dato sin verificar.
+- **Verde:** vuelo directo, observación reciente, buen precio frente al histórico o precio dentro del objetivo configurado. El objetivo solo se compara cuando coincide la moneda.
+- **Ámbar:** observación de más de 6 horas o precio alto frente al histórico.
+- **Neutro:** número de escalas, dato sin verificar, precio habitual o histórico insuficiente.
 
 Estos colores facilitan la lectura; no certifican disponibilidad ni sustituyen la recomendación de compra. La tabla mantiene los encabezados visibles al desplazarse verticalmente, resalta la fila bajo el cursor o el foco y permite desplazamiento horizontal en pantallas pequeñas. Los encabezados ordenables son botones accesibles por teclado e indican su sentido de ordenación a los lectores de pantalla.
 
@@ -218,6 +239,20 @@ La aplicación sigue orientada a uso personal y no incluye autenticación ni ges
 
 Para resultados, `sort` admite `price`, `destination`, `departure`, `return`, `airline`, `stops`, `duration` y `recent`. `direction` acepta `asc` o `desc`. Si se omite, `recent` ordena de más reciente a más antiguo y los demás criterios son ascendentes. `max_duration` se expresa en minutos; `provider` usa el nombre del adaptador, por ejemplo `amadeus` o `mock`. El precio mínimo no puede superar al máximo.
 
+Cada resultado incluye un objeto `history_indicator` con estos campos:
+
+| Campo | Contenido |
+| --- | --- |
+| `level` | `low`, `typical`, `high` o `insufficient` |
+| `trend` | `up`, `down`, `stable` o `insufficient` |
+| `days` | Número de días previos comparables en la ventana de 30 días |
+| `median_price` | Mediana de mínimos diarios, o `null` si hay menos de 3 días |
+| `vs_median_percent` | Diferencia porcentual frente a la mediana, o `null` |
+| `change_percent` | Diferencia porcentual frente al último mínimo diario previo, o `null` |
+| `previous_date` | Fecha UTC de ese día previo (`YYYY-MM-DD`), o `null` |
+
+Los importes usan la moneda de la oferta y los porcentajes se redondean a un decimal. Los umbrales se aplican antes del redondeo. La valoración histórica y la tendencia son independientes del campo `recommendation`.
+
 Ejemplo sobre una búsqueda existente, sustituyendo `1` por su identificador:
 
 ```bash
@@ -233,7 +268,7 @@ cd backend
 /tmp/flight-monitor-dev/bin/python -m unittest discover -s tests -v
 ```
 
-Las pruebas no consumen APIs: cubren failover, caché, cuotas, 429, reintentos, timeout, exclusión concurrente, filtros y ordenamiento antes de paginar, valores desconocidos al final, separación demo/test, adaptadores y migración de una base anterior. Los contratos opcionales se prueban al instalar `requirements-experimental.txt` o `requirements-browser.txt`; de lo contrario se omiten esas pruebas concretas.
+Las pruebas no consumen APIs: cubren failover, caché, cuotas, 429, reintentos, timeout, exclusión concurrente, filtros y ordenamiento antes de paginar, valores desconocidos al final, separación demo/test, adaptadores y migración de una base anterior. También cubren niveles y tendencias del histórico, mínimos diarios, escasez de datos y exclusión de otras monedas y observaciones fuera de la ventana. Los contratos opcionales se prueban al instalar `requirements-experimental.txt` o `requirements-browser.txt`; de lo contrario se omiten esas pruebas concretas.
 
 ```bash
 cd frontend
@@ -256,6 +291,14 @@ También se verificaron migraciones y bloqueo con PostgreSQL desechable, y el fl
 
 Para consultar el comportamiento anterior, [documentación histórica v2](docs/legacy-v2.md); sus instrucciones no describen esta versión.
 
-### Indicadores de histórico
+## Vista limpia y resultados únicos
 
-Cada oferta incluye `history_indicator`: compara el precio mostrado con los mínimos diarios de la misma oferta y moneda durante los 30 días anteriores a su última observación (días UTC; se excluye el día de esa observación). Con al menos 3 días previos, se muestra «Buen precio» si está un 10% o más por debajo de la mediana, «Precio alto» si está un 10% o más por encima y «Precio habitual» en los demás casos. La tendencia compara con el mínimo del último día previo disponible: alza o baja a partir del 2%, estable por debajo. Se muestran la variación y la fecha de comparación; sin datos suficientes se indica expresamente. Son comparaciones del histórico registrado, no predicciones.
+El acceso **Usar Kiwi + Google** configura FlightFinder y fast-flights (motor de flights-skill), permite fuentes experimentales y compara ambas en USD. Requiere habilitarlas e instalar las dependencias opcionales descritas arriba. Travel se utiliza como referencia de consultas acotadas y caché; no se instala su daemon, que consultaría de nuevo Kiwi.
+
+La identidad nueva compara todos los segmentos de ida y vuelta: aeropuertos, horarios locales y números de vuelo. Agrupa itinerarios identificados entre FlightFinder, Kiwi y Amadeus, conservando el menor precio por proveedor. HTTP y Chromium comparten identidad cuando devuelven el mismo descubrimiento de su parser de Google. Sin datos suficientes, las ofertas permanecen separadas; no se confunden dos vuelos por compartir fecha, aerolínea o precio. Monedas, entornos de prueba y viajes incompletos se mantienen separados.
+
+La lectura agrupa también registros anteriores antes de paginar, sin borrar ofertas ni observaciones. Entre registros del mismo proveedor se prioriza el más reciente; entre proveedores, los precios observados en las últimas seis horas antes que los antiguos y después el menor importe. Los filtros se aplican a las ofertas candidatas antes de agrupar. El histórico sigue perteneciendo a la oferta elegida, no mezcla series de distintos vendedores. El diagnóstico de nuevas ejecuciones incluye ofertas recibidas (`raw_results`), resultados únicos y duplicados agrupados (`duplicates_removed`).
+
+Los controles de cobertura y fuentes y los filtros secundarios se encuentran en desplegables. Las fuentes existentes continúan disponibles para búsquedas guardadas y configuraciones avanzadas.
+
+Limitación del adaptador fijado: FlightFinder no rellena `flight_number` en su parser actual. Sus repeticiones se agrupan por los detalles disponibles dentro del mismo proveedor; la fusión con otro proveedor exige que todos los números de vuelo estén presentes. No se inventan números ni se fusionan coincidencias ambiguas.

@@ -1,5 +1,3 @@
-import hashlib
-import json
 import logging
 import statistics
 import threading
@@ -21,6 +19,7 @@ from app.providers.extended import (
     FastFlightsProvider,
     GoogleBrowserProvider,
 )
+from .identity import fingerprint as _fp
 from .scoring import score_offer
 from .telegram import send_telegram
 from .planner import plan
@@ -53,51 +52,6 @@ def providers():
     return [p for p in real_providers() if p.enabled] or [MockProvider()]
 
 
-def _fp(o):
-    # Without complete comparable segment IDs, do not merge different extractors.
-    # Keep distinct itineraries using flight/segment details where available.
-    raw = o.raw
-    itinerary = {
-        k: raw[k]
-        for k in ("flights", "route", "itineraries", "outbound", "inbound", "legs")
-        if k in raw
-    }
-
-    def strip_prices(value):
-        if isinstance(value, dict):
-            return {
-                k: strip_prices(v)
-                for k, v in value.items()
-                if not any(
-                    x in k.lower()
-                    for x in ("price", "fare", "token", "booking", "cost", "id")
-                )
-            }
-        if isinstance(value, list):
-            return [strip_prices(v) for v in value]
-        return value
-
-    identity = (
-        strip_prices(itinerary) if itinerary else (o.provider_offer_id or str(o.price))
-    )
-    key = [
-        o.provider,
-        raw.get("_environment", "production"),
-        o.origin,
-        o.destination,
-        str(o.departure_date),
-        str(o.return_date),
-        o.currency,
-        sorted(o.airlines),
-        o.stops,
-        o.duration_minutes,
-        identity,
-    ]
-    return hashlib.sha256(
-        json.dumps(key, sort_keys=True, default=str).encode()
-    ).hexdigest()
-
-
 def merge(items):
     groups = defaultdict(list)
     for x in items:
@@ -105,7 +59,14 @@ def merge(items):
     out = []
     for fp, xs in groups.items():
         # One observation per provider and itinerary, not duplicate best/other rows.
-        xs = list({x.provider: x for x in xs}.values())
+        xs = list(
+            {
+                x.provider: x
+                for x in sorted(
+                    xs, key=lambda x: (x.price, x.booking_url or ""), reverse=True
+                )
+            }.values()
+        )
         prices = [x.price for x in xs]
         med = statistics.median(prices)
         families = {FAMILIES.get(x.provider, x.provider) for x in xs}
@@ -227,7 +188,8 @@ async def _collect(db, search, run):
         completed,
     )
     notifications = []
-    for fp, best, xs, med, consensus, live_count in merge(items):
+    grouped = merge(items)
+    for fp, best, xs, med, consensus, live_count in grouped:
         observed = datetime.fromisoformat(
             best.raw.get("_observed_at", datetime.now(timezone.utc).isoformat())
         )
@@ -330,7 +292,7 @@ async def _collect(db, search, run):
         for e in engine.trace
     )
     run.provider_count = len(selected)
-    run.result_count = len(items)
+    run.result_count = len(grouped)
     run.status = (
         ("partial" if errors or limited or total_combinations > len(qs) else "ok")
         if items
@@ -341,6 +303,8 @@ async def _collect(db, search, run):
         "mode": "demo"
         if selected and all(p.name == "mock" for p in selected)
         else "real",
+        "raw_results": len(items),
+        "duplicates_removed": len(items) - len(grouped),
         "strategy": search.strategy,
         "total_combinations": total_combinations,
         "combinations": len(qs),

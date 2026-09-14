@@ -254,7 +254,7 @@ export default function Home() {
             Flight Monitor <span>↗</span>
           </h1>
           <p className="muted">
-            Encuentra tu viaje, con visibilidad de cada fuente.
+            Compara precios. Un resultado por itinerario identificado.
           </p>
         </div>
         <div className="appearance">
@@ -341,10 +341,7 @@ export default function Home() {
           </p>
         )}
       </section>
-      <details
-        className="card diagnostics"
-        open={!providers.some((p) => p.enabled)}
-      >
+      <details className="card diagnostics">
         <summary>
           Fuentes y disponibilidad{" "}
           <span className="muted">
@@ -394,6 +391,7 @@ export default function Home() {
             <strong>{statuses[latest.status] || latest.status}</strong>
             <span className="muted">{stamp(latest.started_at)}</span>
             <span>{latest.result_count} resultados</span>
+            {latest.details?.duplicates_removed > 0 && <span className="status-badge neutral">{latest.details.duplicates_removed} duplicados agrupados</span>}
           </div>
           <p className="muted">
             {latest.details?.completed_combinations ??
@@ -584,6 +582,8 @@ export default function Home() {
             </select>
           </label>
         </div>
+        <details className="advanced-options">
+        <summary>Más filtros · duración, proveedor y orden</summary>
         <div className="form-grid extra-filters">
           <label>
             Sentido
@@ -630,6 +630,7 @@ export default function Home() {
           />
           Solo observaciones de las últimas 6 horas
         </label>
+        </details>
       </section>
       {best && (
         <section className="best">
@@ -655,10 +656,10 @@ export default function Home() {
         </section>
       )}
       <section aria-busy={loading} className="card results">
-        <p className="muted table-help">
-          Pulsa una columna para ordenar; vuelve a pulsar para invertir el
-          orden. Los valores sin verificar aparecen al final. El histórico compara mínimos diarios de la misma oferta y moneda: buen precio si baja al menos un 10% frente a la mediana; alto si sube un 10%. La tendencia compara con el último día registrado (estable si varía menos del 2%).
-        </p>
+        <details className="table-help">
+          <summary>Cómo se comparan los resultados</summary>
+          <p className="muted">Los itinerarios identificados se agrupan antes de paginar. Se muestra el menor precio entre las observaciones recientes disponibles; las ofertas sin identidad suficiente se mantienen separadas. El histórico corresponde a la oferta mostrada. Pulsa una columna para ordenar.</p>
+        </details>
         <h2 aria-live="polite">
           {loading
             ? "Cargando ofertas…"
@@ -734,6 +735,7 @@ export default function Home() {
                       </td>
                       <td>
                         {r.provider_names?.join(", ")}
+                        {r.grouped_offers > 1 && <small className="status-badge neutral">{r.grouped_offers} ofertas agrupadas</small>}
                         <br />
                         <small className="muted">
                           {source === "demo"
