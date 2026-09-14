@@ -1,0 +1,3 @@
+# Optional, explicitly pinned integrations. No browser or agent runtime required.
+fast-flights==3.1.0
+flightfinder @ https://github.com/wolfiesch/flightfinder/archive/1b912ed0decc93473e5e0914a03e16b1f09b0681.zip

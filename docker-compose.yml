@@ -1,3 +1,33 @@
+x-backend-build: &backend-build
+  context: ./backend
+  args:
+    INSTALL_EXPERIMENTAL: ${INSTALL_EXPERIMENTAL:-false}
+    INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
+x-provider-env: &provider-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: postgresql+psycopg://flight:flight@postgres:5432/flights
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  FLIGHTPOWERS_API_KEY: ${FLIGHTPOWERS_API_KEY:-}
+  SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+  TRAVELPAYOUTS_API_TOKEN: ${TRAVELPAYOUTS_API_TOKEN:-}
+  DATACRAWLER_API_KEY: ${DATACRAWLER_API_KEY:-}
+  DATACRAWLER_MAX_REQUESTS_PER_RUN: ${DATACRAWLER_MAX_REQUESTS_PER_RUN:-5}
+  AMADEUS_CLIENT_ID: ${AMADEUS_CLIENT_ID:-}
+  AMADEUS_CLIENT_SECRET: ${AMADEUS_CLIENT_SECRET:-}
+  AMADEUS_PRODUCTION: ${AMADEUS_PRODUCTION:-false}
+  KIWI_API_KEY: ${KIWI_API_KEY:-}
+  RYANAIR_ENABLED: ${RYANAIR_ENABLED:-false}
+  FLIGHTFINDER_ENABLED: ${FLIGHTFINDER_ENABLED:-false}
+  FAST_FLIGHTS_ENABLED: ${FAST_FLIGHTS_ENABLED:-false}
+  GOOGLE_BROWSER_ENABLED: ${GOOGLE_BROWSER_ENABLED:-false}
+  PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-25}
+  SEARCH_TIMEOUT_SECONDS: ${SEARCH_TIMEOUT_SECONDS:-120}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-900}
+  PROVIDER_MAX_CALLS_PER_RUN: ${PROVIDER_MAX_CALLS_PER_RUN:-10}
+  PROVIDER_MONTHLY_CALL_LIMIT: ${PROVIDER_MONTHLY_CALL_LIMIT:-500}
+  GOOGLE_BROWSER_MAX_CALLS_PER_RUN: ${GOOGLE_BROWSER_MAX_CALLS_PER_RUN:-2}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
 services:
   postgres:
     image: postgres:17-alpine
@@ -10,43 +40,32 @@ services:
       timeout: 5s
       retries: 20
   backend:
-    build: ./backend
+    build: *backend-build
     restart: unless-stopped
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+psycopg://flight:flight@postgres:5432/flights
-      FLIGHTPOWERS_API_KEY: ${FLIGHTPOWERS_API_KEY:-}
-      DATACRAWLER_API_KEY: ${DATACRAWLER_API_KEY:-}
-      DATACRAWLER_MAX_REQUESTS_PER_RUN: ${DATACRAWLER_MAX_REQUESTS_PER_RUN:-5}
-      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
-      TRAVELPAYOUTS_API_TOKEN: ${TRAVELPAYOUTS_API_TOKEN:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    environment: *provider-env
     depends_on:
       postgres: {condition: service_healthy}
     ports: ["8000:8000"]
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
   worker:
-    build: ./backend
+    build: *backend-build
     restart: unless-stopped
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+psycopg://flight:flight@postgres:5432/flights
-      FLIGHTPOWERS_API_KEY: ${FLIGHTPOWERS_API_KEY:-}
-      DATACRAWLER_API_KEY: ${DATACRAWLER_API_KEY:-}
-      DATACRAWLER_MAX_REQUESTS_PER_RUN: ${DATACRAWLER_MAX_REQUESTS_PER_RUN:-5}
-      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
-      TRAVELPAYOUTS_API_TOKEN: ${TRAVELPAYOUTS_API_TOKEN:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    environment: *provider-env
     depends_on:
-      postgres: {condition: service_healthy}
+      backend: {condition: service_healthy}
     command: python -m app.worker
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-    depends_on: [backend]
+    depends_on:
+      backend: {condition: service_healthy}
     ports: ["3000:3000"]
 volumes: {postgres_data: {}}
