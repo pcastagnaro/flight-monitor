@@ -255,3 +255,7 @@ El script comprueba creación, estimación, ejecución demo, histórico, caché,
 También se verificaron migraciones y bloqueo con PostgreSQL desechable, y el flujo de UI en Chromium de escritorio/móvil. Las verificaciones públicas y sus límites están en [SOURCES.md](docs/SOURCES.md). Los resultados de prueba no certifican que una tarifa continúe disponible.
 
 Para consultar el comportamiento anterior, [documentación histórica v2](docs/legacy-v2.md); sus instrucciones no describen esta versión.
+
+### Indicadores de histórico
+
+Cada oferta incluye `history_indicator`: compara el precio mostrado con los mínimos diarios de la misma oferta y moneda durante los 30 días anteriores a su última observación (días UTC; se excluye el día de esa observación). Con al menos 3 días previos, se muestra «Buen precio» si está un 10% o más por debajo de la mediana, «Precio alto» si está un 10% o más por encima y «Precio habitual» en los demás casos. La tendencia compara con el mínimo del último día previo disponible: alza o baja a partir del 2%, estable por debajo. Se muestran la variación y la fecha de comparación; sin datos suficientes se indica expresamente. Son comparaciones del histórico registrado, no predicciones.

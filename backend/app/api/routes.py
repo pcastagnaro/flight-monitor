@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query as Param
 from sqlalchemy import select, desc
+from collections import defaultdict
+from datetime import timedelta
+from app.services.history import history_indicator
 from typing import Annotated
 from sqlalchemy.orm import Session
 from app.db import get_db
@@ -163,8 +166,6 @@ def results(
     if destination:
         statement = statement.where(Offer.destination == destination.upper())
     if fresh_only:
-        from datetime import timedelta
-
         statement = statement.where(
             Offer.last_seen_at >= datetime.now(timezone.utc) - timedelta(hours=6)
         )
@@ -193,6 +194,14 @@ def results(
     offers = db.scalars(
         statement.order_by(ordering, Offer.id).offset(offset).limit(limit)
     ).all()
+    historical = defaultdict(list)
+    if offers:
+        cutoff = min(utc(o.last_seen_at) for o in offers) - timedelta(days=30)
+        for snapshot in db.scalars(select(PriceSnapshot).where(
+            PriceSnapshot.offer_id.in_([o.id for o in offers]),
+            PriceSnapshot.checked_at >= cutoff,
+        )):
+            historical[snapshot.offer_id].append(snapshot)
     out = []
     for o in offers:
         rec = db.scalar(
@@ -218,6 +227,7 @@ def results(
                 "providers": o.provider_count,
                 "consensus": o.consensus_score,
                 "price_level": o.price_level,
+                "history_indicator": history_indicator(o, historical[o.id]),
                 "booking_url": o.booking_url
                 if o.booking_url and urlparse(o.booking_url).scheme in ("http", "https")
                 else None,

@@ -43,6 +43,22 @@ const events: Record<string, string> = {
   circuit_open: "Pausa por fallos",
   deadline: "Tiempo agotado",
 };
+function HistoryIndicator({ offer }: { offer: any }) {
+  const h = offer.history_indicator;
+  const levels: Record<string, string> = { low: "Buen precio", typical: "Precio habitual", high: "Precio alto", insufficient: "Histórico insuficiente" };
+  const trends: Record<string, string> = { up: "↑ En alza", down: "↓ En baja", stable: "→ Estable" };
+  return <div className="history-indicator">
+    <span className={`status-badge ${h?.level === "low" ? "good" : h?.level === "high" ? "warning" : "neutral"}`}>
+      {levels[h?.level] || levels.insufficient}
+    </span>
+    {h?.median_price != null ? <small className="muted">
+      {h.vs_median_percent > 0 ? "+" : ""}{h.vs_median_percent.toLocaleString("es-ES")}% frente a la mediana ({h.median_price.toLocaleString("es-ES")} {offer.currency}) · {h.days} días
+    </small> : <small className="muted">Se necesitan 3 días previos · {h?.days ?? 0} disponibles</small>}
+    {h && h.trend !== "insufficient" ? <small>
+      {trends[h.trend]} · {h.change_percent > 0 ? "+" : ""}{h.change_percent.toLocaleString("es-ES")}% desde {h.previous_date}
+    </small> : <small className="muted">Sin tendencia todavía</small>}
+  </div>;
+}
 export default function Home() {
   const [searches, setSearches] = useState<any[]>([]),
     [selected, setSelected] = useState<number | null>(null),
@@ -632,6 +648,7 @@ export default function Home() {
               {best.departure_date} / {best.return_date}
             </p>
           </div>
+          <HistoryIndicator offer={best} />
           <span className="pill">
             {best.stale ? "Consulta antigua" : "Observación reciente"}
           </span>
@@ -640,7 +657,7 @@ export default function Home() {
       <section aria-busy={loading} className="card results">
         <p className="muted table-help">
           Pulsa una columna para ordenar; vuelve a pulsar para invertir el
-          orden. Los valores sin verificar aparecen al final.
+          orden. Los valores sin verificar aparecen al final. El histórico compara mínimos diarios de la misma oferta y moneda: buen precio si baja al menos un 10% frente a la mediana; alto si sube un 10%. La tendencia compara con el último día registrado (estable si varía menos del 2%).
         </p>
         <h2 aria-live="polite">
           {loading
@@ -671,6 +688,7 @@ export default function Home() {
                   {heading("duration", "Duración")}
                   <th>Fuente</th>
                   {heading("recent", "Consultado")}
+                  <th>Histórico · 30 días</th>
                   <th>Detalles</th>
                 </tr>
               </thead>
@@ -739,6 +757,7 @@ export default function Home() {
                           {r.stale ? "Más de 6 horas" : "Reciente"}
                         </div>
                       </td>
+                      <td><HistoryIndicator offer={r} /></td>
                       <td>
                         <button
                           className="secondary compact"
